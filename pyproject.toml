@@ -27,6 +27,7 @@ dependencies = [
     "lxml>=5.4.0",
     "unstructured>=0.17.2",
     "supabase>=2.15.1",
+    "gotrue>=2.7.0",
 ]
 
 [project.packages]
@@ -127,4 +128,3 @@ ignore = [
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"
-

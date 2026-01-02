@@ -23,4 +23,4 @@ RUN apt-get update && \
 EXPOSE 8080
 
 # Command to run the application
-CMD ["uv", "run", "uvicorn", "langconnect.server:APP", "--host", "0.0.0.0", "--port", "8080"]
+CMD ["uvicorn", "langconnect.server:APP", "--host", "0.0.0.0", "--port", "8080"]

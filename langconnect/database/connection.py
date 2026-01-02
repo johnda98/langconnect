@@ -9,6 +9,7 @@ from langchain_core.embeddings import Embeddings
 from langchain_postgres.vectorstores import PGVector
 from sqlalchemy import Engine, create_engine
 from sqlalchemy.ext.asyncio import AsyncEngine
+from sqlalchemy.engine import URL
 
 from langconnect import config
 
@@ -53,16 +54,44 @@ async def get_db_connection() -> AsyncGenerator[asyncpg.Connection, None]:
             await conn.close()
 
 
+def _build_sqlalchemy_url(
+    host: str,
+    port: int,
+    user: str,
+    password: str,
+    dbname: str,
+) -> URL:
+    """Construct a SQLAlchemy URL that supports TCP and Unix socket hosts."""
+    if host.startswith("/"):
+        # Cloud SQL sockets and other Unix domain sockets pass the directory via the query.
+        return URL.create(
+            "postgresql+psycopg",
+            username=user,
+            password=password,
+            database=dbname,
+            query={"host": host},
+        )
+
+    return URL.create(
+        "postgresql+psycopg",
+        username=user,
+        password=password,
+        host=host,
+        port=port,
+        database=dbname,
+    )
+
+
 def get_vectorstore_engine(
     host: str = config.POSTGRES_HOST,
-    port: str = config.POSTGRES_PORT,
+    port: int = config.POSTGRES_PORT,
     user: str = config.POSTGRES_USER,
     password: str = config.POSTGRES_PASSWORD,
     dbname: str = config.POSTGRES_DB,
 ) -> Engine:
     """Creates and returns a sync SQLAlchemy engine for PostgreSQL."""
-    connection_string = f"postgresql+psycopg://{user}:{password}@{host}:{port}/{dbname}"
-    engine = create_engine(connection_string)
+    engine_url = _build_sqlalchemy_url(host, port, user, password, dbname)
+    engine = create_engine(engine_url)
     return engine
 
 
