@@ -1,5 +1,6 @@
 import logging
 import uuid
+from typing import Any
 
 from fastapi import UploadFile
 from langchain_community.document_loaders.parsers import BS4HTMLParser, PDFMinerParser
@@ -32,6 +33,32 @@ MIMETYPE_BASED_PARSER = MimeTypeBasedParser(
 # Text Splitter
 TEXT_SPLITTER = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
 
+_NULL_CHAR = "\x00"
+
+
+def _sanitize_text(value: str | None) -> str:
+    """Remove characters that PostgreSQL text columns cannot store."""
+    if not value:
+        return ""
+    return value.replace(_NULL_CHAR, "")
+
+
+def _sanitize_value(value: Any) -> Any:
+    """Recursively sanitize strings in metadata structures."""
+    if isinstance(value, str):
+        return _sanitize_text(value)
+    if isinstance(value, dict):
+        return {k: _sanitize_value(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_sanitize_value(item) for item in value]
+    return value
+
+
+def _sanitize_metadata(metadata: dict | None) -> dict:
+    if not metadata:
+        return {}
+    return {key: _sanitize_value(val) for key, val in metadata.items()}
+
 
 async def process_document(
     file: UploadFile, metadata: dict | None = None
@@ -45,24 +72,33 @@ async def process_document(
 
     docs = MIMETYPE_BASED_PARSER.parse(blob)
 
+    for doc in docs:
+        doc.page_content = _sanitize_text(doc.page_content)
+        if hasattr(doc, "metadata") and isinstance(doc.metadata, dict):
+            doc.metadata = _sanitize_metadata(doc.metadata)
+
     # Add provided metadata to each document
     if metadata:
+        sanitized_metadata = _sanitize_metadata(metadata)
         for doc in docs:
             # Ensure metadata attribute exists and is a dict
             if not hasattr(doc, "metadata") or not isinstance(doc.metadata, dict):
                 doc.metadata = {}
             # Update with provided metadata, preserving existing keys if not overridden
-            doc.metadata.update(metadata)
+            doc.metadata.update(sanitized_metadata)
 
     # Split documents
     split_docs = TEXT_SPLITTER.split_documents(docs)
 
     # Add the generated file_id to all split documents' metadata
     for split_doc in split_docs:
+        split_doc.page_content = _sanitize_text(split_doc.page_content)
         if not hasattr(split_doc, "metadata") or not isinstance(
             split_doc.metadata, dict
         ):
             split_doc.metadata = {}  # Initialize if it doesn't exist
+        else:
+            split_doc.metadata = _sanitize_metadata(split_doc.metadata)
         split_doc.metadata["file_id"] = str(
             file_id
         )  # Store as string for compatibility
