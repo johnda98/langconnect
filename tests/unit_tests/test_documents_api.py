@@ -104,6 +104,36 @@ async def test_documents_create_and_list_and_delete_and_search() -> None:
         assert del_resp2.status_code in (200, 204)
 
 
+async def test_documents_upload_strips_null_bytes() -> None:
+    """Uploading content that includes NUL bytes should sanitize before storage."""
+    async with get_async_test_client() as client:
+        # Create a collection
+        collection_response = await client.post(
+            "/collections",
+            json={"name": "nul_safety", "metadata": {}},
+            headers=USER_1_HEADERS,
+        )
+        assert collection_response.status_code == 201
+        collection_id = collection_response.json()["uuid"]
+
+        files = [("files", ("nul.txt", b"Hello\x00World", "text/plain"))]
+        upload_resp = await client.post(
+            f"/collections/{collection_id}/documents",
+            files=files,
+            headers=USER_1_HEADERS,
+        )
+        assert upload_resp.status_code == 200
+
+        list_resp = await client.get(
+            f"/collections/{collection_id}/documents", headers=USER_1_HEADERS
+        )
+        assert list_resp.status_code == 200
+        docs = list_resp.json()
+        assert docs
+        assert "\x00" not in docs[0]["content"]
+        assert docs[0]["content"] == "HelloWorld"
+
+
 async def test_documents_create_with_invalid_metadata_json() -> None:
     """Test creating documents with invalid metadata JSON."""
     async with get_async_test_client() as client:

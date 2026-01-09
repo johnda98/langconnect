@@ -21,6 +21,36 @@ from langchain_core.documents import Document
 from langconnect.database.connection import get_db_connection, get_vectorstore
 
 logger = logging.getLogger(__name__)
+_NULL_CHAR = "\x00"
+
+
+def _sanitize_text(value: str | None) -> str:
+    if not value:
+        return ""
+    return value.replace(_NULL_CHAR, "")
+
+
+def _sanitize_value(value: Any) -> Any:
+    if isinstance(value, str):
+        return _sanitize_text(value)
+    if isinstance(value, dict):
+        return {k: _sanitize_value(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_sanitize_value(item) for item in value]
+    return value
+
+
+def _sanitize_metadata(metadata: dict | None) -> dict:
+    if not metadata:
+        return {}
+    return {key: _sanitize_value(val) for key, val in metadata.items()}
+
+
+def _sanitize_document(doc: Document) -> Document:
+    doc.page_content = _sanitize_text(doc.page_content)
+    if hasattr(doc, "metadata") and isinstance(doc.metadata, dict):
+        doc.metadata = _sanitize_metadata(doc.metadata)
+    return doc
 
 
 class CollectionDetails(TypedDict):
@@ -286,7 +316,8 @@ class Collection:
         """Add one or more documents to the collection."""
         details = await self._get_details_or_raise()
         store = get_vectorstore(collection_name=details["table_id"])
-        added_ids = store.add_documents(documents)
+        sanitized_docs = [_sanitize_document(doc) for doc in documents]
+        added_ids = store.add_documents(sanitized_docs)
         return added_ids
 
     async def delete(
