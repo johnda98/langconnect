@@ -44,6 +44,20 @@ To run the services in development mode with live reload:
 docker-compose up
 ```
 
+### Cleanup maintenance job
+
+To see how many orphaned embeddings would be removed (no deletes):
+
+```bash
+docker compose run --rm api python -m langconnect.maintenance.cleanup --dry-run
+```
+
+To perform the cleanup:
+
+```bash
+docker compose run --rm api python -m langconnect.maintenance.cleanup
+```
+
 ## API Documentation
 
 The API documentation is available at http://localhost:8080/docs when the service is running.
