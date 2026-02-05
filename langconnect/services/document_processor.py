@@ -87,6 +87,13 @@ async def process_document(
             # Update with provided metadata, preserving existing keys if not overridden
             doc.metadata.update(sanitized_metadata)
 
+    # If nothing was extracted, fail fast so the caller can warn the user
+    total_len = sum(len((d.page_content or "").strip()) for d in docs)
+    if total_len == 0:
+        raise ValueError(
+            "No extractable text found in file; upload a text-searchable copy (e.g., OCR the PDF)."
+        )
+
     # Split documents
     split_docs = TEXT_SPLITTER.split_documents(docs)
 
