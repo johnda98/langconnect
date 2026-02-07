@@ -283,6 +283,19 @@ class CollectionsManager:
         Raises 404 if no such collection.
         """
         async with get_db_connection() as conn:
+            # First, delete embeddings tied to this collection (owned by user)
+            await conn.execute(
+                """
+                DELETE FROM langchain_pg_embedding AS lpe
+                USING langchain_pg_collection AS lpc
+                WHERE lpe.collection_id = lpc.uuid
+                  AND lpc.uuid = $1
+                  AND lpc.cmetadata->>'owner_id' = $2;
+                """,
+                collection_id,
+                self.user_id,
+            )
+            # Then delete the collection record itself
             result = await conn.execute(
                 """
                 DELETE FROM langchain_pg_collection
@@ -435,6 +448,31 @@ class Collection:
             "metadata": metadata,
         }
 
+    async def get_file_text(self, file_id: str) -> str:
+        """Fetch concatenated text for a given file_id within this collection."""
+        async with get_db_connection() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT e.document
+                  FROM langchain_pg_embedding e
+                  JOIN langchain_pg_collection c
+                    ON e.collection_id = c.uuid
+                 WHERE c.uuid = $1
+                   AND c.cmetadata->>'owner_id' = $2
+                   AND e.cmetadata->>'file_id' = $3
+                 ORDER BY e.id
+                """,
+                self.collection_id,
+                self.user_id,
+                file_id,
+            )
+        if not rows:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Document not found in this collection.",
+            )
+        return "\n\n".join(r["document"] or "" for r in rows)
+
     async def search(
         self, query: str, *, limit: int = 20
     ) -> builtins.list[dict[str, Any]]:
@@ -464,7 +502,10 @@ class Collection:
                         ON e.collection_id = c.uuid
                      WHERE c.uuid = $1
                        AND c.cmetadata->>'owner_id' = $2
-                       AND e.document ILIKE ANY($3)
+                       AND (
+                             e.document ILIKE ANY($3)
+                             OR e.cmetadata->>'name' ILIKE ANY($3)
+                           )
                      LIMIT $4
                     """,
                     self.collection_id,
