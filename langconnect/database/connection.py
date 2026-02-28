@@ -8,6 +8,7 @@ import sqlalchemy
 from langchain_core.embeddings import Embeddings
 from langchain_postgres.vectorstores import PGVector
 from sqlalchemy import Engine, create_engine
+from sqlalchemy.engine import URL
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from langconnect import config
@@ -61,7 +62,16 @@ def get_vectorstore_engine(
     dbname: str = config.POSTGRES_DB,
 ) -> Engine:
     """Creates and returns a sync SQLAlchemy engine for PostgreSQL."""
-    connection_string = f"postgresql+psycopg://{user}:{password}@{host}:{port}/{dbname}"
+    if host.startswith("/"):
+        # Cloud SQL Unix socket: psycopg understands host=/cloudsql/INSTANCE_NAME
+        connection_string = (
+            f"postgresql+psycopg://{user}:{password}@/{dbname}"
+            f"?host={host}&port={port}"
+        )
+    else:
+        connection_string = (
+            f"postgresql+psycopg://{user}:{password}@{host}:{port}/{dbname}"
+        )
     engine = create_engine(connection_string)
     return engine
 

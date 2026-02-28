@@ -58,6 +58,13 @@ To perform the cleanup:
 docker compose run --rm api python -m langconnect.maintenance.cleanup
 ```
 
+Convenience script:
+
+```bash
+./scripts/cleanup-orphans.sh        # delete orphans
+./scripts/cleanup-orphans.sh --dry-run
+```
+
 ## API Documentation
 
 The API documentation is available at http://localhost:8080/docs when the service is running.
