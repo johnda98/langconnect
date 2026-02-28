@@ -118,6 +118,7 @@ celerybeat.pid
 
 # Environments
 .env
+cloudrun-testing.env
 .env.staging
 .envrc
 .venv*

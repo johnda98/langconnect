@@ -11,6 +11,7 @@ Replace with your own implementation or favorite vectorstore if needed.
 import builtins
 import json
 import logging
+import re
 import uuid
 from typing import Any, NotRequired, Optional, TypedDict
 
@@ -282,6 +283,19 @@ class CollectionsManager:
         Raises 404 if no such collection.
         """
         async with get_db_connection() as conn:
+            # First, delete embeddings tied to this collection (owned by user)
+            await conn.execute(
+                """
+                DELETE FROM langchain_pg_embedding AS lpe
+                USING langchain_pg_collection AS lpc
+                WHERE lpe.collection_id = lpc.uuid
+                  AND lpc.uuid = $1
+                  AND lpc.cmetadata->>'owner_id' = $2;
+                """,
+                collection_id,
+                self.user_id,
+            )
+            # Then delete the collection record itself
             result = await conn.execute(
                 """
                 DELETE FROM langchain_pg_collection
@@ -434,21 +448,108 @@ class Collection:
             "metadata": metadata,
         }
 
+    async def get_file_text(self, file_id: str) -> str:
+        """Fetch concatenated text for a given file_id within this collection."""
+        async with get_db_connection() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT e.document
+                  FROM langchain_pg_embedding e
+                  JOIN langchain_pg_collection c
+                    ON e.collection_id = c.uuid
+                 WHERE c.uuid = $1
+                   AND c.cmetadata->>'owner_id' = $2
+                   AND e.cmetadata->>'file_id' = $3
+                 ORDER BY e.id
+                """,
+                self.collection_id,
+                self.user_id,
+                file_id,
+            )
+        if not rows:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Document not found in this collection.",
+            )
+        return "\n\n".join(r["document"] or "" for r in rows)
+
     async def search(
-        self, query: str, *, limit: int = 4
+        self, query: str, *, limit: int = 20
     ) -> builtins.list[dict[str, Any]]:
-        """Run a semantic similarity search in the vector store.
-        Note: offset is applied client-side after retrieval.
-        """
+        """Search with keyword-first lexical pass, then semantic, and rank by keyword hits."""
         details = await self._get_details_or_raise()
         store = get_vectorstore(collection_name=details["table_id"])
-        results = store.similarity_search_with_score(query, k=limit)
-        return [
+
+        # Build simple keyword variants (plural/singular)
+        terms = [t.strip() for t in re.split(r"[\\s,/]+", query.lower()) if t.strip()]
+        variants = set()
+        for t in terms:
+            variants.add(t)
+            variants.add(t.rstrip("s"))
+            variants.add(f"{t}s")
+        variants = {v for v in variants if v}
+
+        # Keyword-first: fetch chunks containing any variant
+        lexical_results: list[dict[str, Any]] = []
+        if variants:
+            patterns = [f"%{v}%" for v in variants]
+            async with get_db_connection() as conn:
+                rows = await conn.fetch(
+                    """
+                    SELECT e.id, e.document, e.cmetadata
+                      FROM langchain_pg_embedding e
+                      JOIN langchain_pg_collection c
+                        ON e.collection_id = c.uuid
+                     WHERE c.uuid = $1
+                       AND c.cmetadata->>'owner_id' = $2
+                       AND (
+                             e.document ILIKE ANY($3)
+                             OR e.cmetadata->>'name' ILIKE ANY($3)
+                           )
+                     LIMIT $4
+                    """,
+                    self.collection_id,
+                    self.user_id,
+                    patterns,
+                    max(limit, 20),
+                )
+            lexical_results = [
+                {
+                    "id": str(r["id"]),
+                    "page_content": r["document"],
+                    "metadata": json.loads(r["cmetadata"]) if r["cmetadata"] else {},
+                    "score": 0.0,
+                    "source": "lexical",
+                }
+                for r in rows
+            ]
+
+        # If we got lexical hits, return them immediately (most precise), truncated to limit.
+        if lexical_results:
+            return lexical_results[:limit]
+
+        # Semantic search
+        semantic_results_raw = store.similarity_search_with_score(query, k=max(limit, 40))
+        semantic_results = [
             {
                 "id": doc.id,
                 "page_content": doc.page_content,
                 "metadata": doc.metadata,
                 "score": score,
+                "source": "semantic",
             }
-            for doc, score in results
+            for doc, score in semantic_results_raw
         ]
+
+        # If no results at all, surface an explicit 0-hit signal
+        if not semantic_results:
+            raise HTTPException(
+                status_code=404,
+                detail={
+                    "message": "0 hits for query",
+                    "query": query,
+                    "collection_id": self.collection_id,
+                },
+            )
+
+        return semantic_results[:limit]

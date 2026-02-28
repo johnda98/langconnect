@@ -168,6 +168,24 @@ async def documents_delete(
     return {"success": True}
 
 
+@router.get(
+    "/collections/{collection_id}/documents/{document_id}/text",
+    response_model=dict[str, str],
+)
+async def documents_get_text(
+    user: Annotated[AuthenticatedUser, Depends(resolve_user)],
+    collection_id: UUID,
+    document_id: str,
+):
+    """Return concatenated indexed text for a document (by file_id) in a collection."""
+    collection = Collection(
+        collection_id=str(collection_id),
+        user_id=user.identity,
+    )
+    content = await collection.get_file_text(document_id)
+    return {"file_id": document_id, "content": content}
+
+
 @router.post(
     "/collections/{collection_id}/documents/search", response_model=list[SearchResult]
 )

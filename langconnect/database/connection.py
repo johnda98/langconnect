@@ -8,6 +8,7 @@ import sqlalchemy
 from langchain_core.embeddings import Embeddings
 from langchain_postgres.vectorstores import PGVector
 from sqlalchemy import Engine, create_engine
+from sqlalchemy.engine import URL
 from sqlalchemy.ext.asyncio import AsyncEngine
 from sqlalchemy.engine import URL
 
